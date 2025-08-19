@@ -99,8 +99,9 @@ client.on("interactionCreate", async interaction => {
     if (isNaN(count) || count < 1) return interaction.reply({ content: "Ungültige Zahl!", ephemeral: true });
 
     const roles = interaction.guild.roles.cache
-      .filter(r => !r.managed && r.name !== "@everyone")
-      .map(r => ({ label: r.name, value: r.id }));
+  .filter(r => !r.managed && r.name !== "@everyone")
+  .map(r => ({ label: r.name, value: r.id }))
+  .slice(0, 25); // nur die ersten 25 Rollen nehmen
 
     const rows = [];
     for (let i = 0; i < count; i++) {
