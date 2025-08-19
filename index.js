@@ -1,96 +1,108 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
-const Parser = require('rss-parser');
-const parser = new Parser();
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from "discord.js";
+import { google } from "googleapis";
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ],
+// Tokens aus Environment Variablen
+const TOKEN = process.env.DISCORD_TOKEN;
+const YT_API_KEY = process.env.YT_API_KEY;
+const CLIENT_ID = process.env.CLIENT_ID; // deine Bot-Application-ID
+
+// Discord Client
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// YouTube API
+const youtube = google.youtube({
+  version: "v3",
+  auth: YT_API_KEY,
 });
 
-// ------------------- Message-Command -------------------
-client.on("messageCreate", msg => {
-  if (msg.content === "!ping") {
-    msg.reply("Pong! 🏓");
-  }
-});
-
-// ------------------- Slash-Command Setup -------------------
-const registeredChannels = {}; // UserID -> YouTube URL
-const notifiedVideos = new Set();
-
+// --- Slash Command registrieren ---
 const commands = [
   new SlashCommandBuilder()
     .setName("channel")
-    .setDescription("Registriert einen YouTube-Kanal für Benachrichtigungen")
+    .setDescription("Überwacht einen YouTube-Kanal und zeigt die neuesten Videos an")
     .addStringOption(option =>
       option.setName("url")
-        .setDescription("Gib die YouTube-Kanal-URL ein")
-        .setRequired(true)
-    )
+        .setDescription("YouTube Kanal URL (z.B. https://youtube.com/@ArtendoYT)")
+        .setRequired(true))
 ].map(cmd => cmd.toJSON());
 
-const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-client.once("ready", async () => {
-  console.log(`✅ Bot ist online als ${client.user.tag}`);
-
-  // Commands registrieren
+(async () => {
   try {
+    console.log("Slash-Commands werden registriert...");
     await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+      Routes.applicationCommands(CLIENT_ID),
       { body: commands }
     );
-    console.log('✅ Slash-Commands registriert!');
-  } catch (error) {
-    console.error(error);
+    console.log("✅ Slash-Commands registriert!");
+  } catch (err) {
+    console.error(err);
   }
+})();
+
+// --- Helper: Kanal-ID holen ---
+async function getChannelIdFromUrl(url) {
+  if (url.includes("/channel/")) {
+    return url.split("/channel/")[1];
+  } else if (url.includes("/@")) {
+    const username = url.split("/@")[1];
+    const res = await youtube.search.list({
+      part: "snippet",
+      type: "channel",
+      q: username,
+      maxResults: 1,
+    });
+    return res.data.items[0]?.snippet.channelId || null;
+  }
+  return null;
+}
+
+// --- Helper: neuestes Video holen ---
+async function getLatestVideo(channelId) {
+  const res = await youtube.search.list({
+    part: "snippet",
+    channelId: channelId,
+    order: "date",
+    maxResults: 1,
+  });
+
+  if (res.data.items.length > 0) {
+    const video = res.data.items[0];
+    return {
+      title: video.snippet.title,
+      url: "https://youtu.be/" + video.id.videoId,
+    };
+  }
+  return null;
+}
+
+// --- Bot Ready ---
+client.once("ready", () => {
+  console.log(`✅ Eingeloggt als ${client.user.tag}`);
 });
 
-// ------------------- Slash-Command Handling -------------------
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+// --- Slash-Command Handler ---
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isCommand()) return;
 
   if (interaction.commandName === "channel") {
     const url = interaction.options.getString("url");
-    
-    // Speichern: UserID → { url, channelId }
-    registeredChannels[interaction.user.id] = {
-      url: url,
-      channelId: interaction.channelId
-    };
 
-    await interaction.reply(`✅ Kanal gespeichert: ${url}\nDie Ankündigungen werden hier gepostet.`);
+    await interaction.reply(`🔎 Suche Kanal für: ${url} ...`);
+
+    const channelId = await getChannelIdFromUrl(url);
+    if (!channelId) return interaction.followUp("❌ Konnte keine Kanal-ID finden!");
+
+    const video = await getLatestVideo(channelId);
+    if (video) {
+      interaction.followUp(`📺 Neuestes Video: **${video.title}**\n${video.url}`);
+    } else {
+      interaction.followUp("❌ Keine Videos gefunden.");
+    }
   }
 });
 
-// ------------------- YouTube Feed prüfen -------------------
-async function checkYouTube() {
-  for (const [userId, info] of Object.entries(registeredChannels)) {
-    const channelId = info.url.split("/").pop(); // YouTube Channel ID
-    const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+client.login(TOKEN);
 
-    try {
-      const feed = await parser.parseURL(feedUrl);
-      const latestVideo = feed.items[0];
-
-      if (!notifiedVideos.has(latestVideo.id)) {
-        const discordChannel = client.channels.cache.get(info.channelId);
-        if (discordChannel) {
-          discordChannel.send(`@everyone ${client.users.cache.get(userId).username} hat ein neues Video hochgeladen: ${latestVideo.link}`);
-          notifiedVideos.add(latestVideo.id);
-        }
-      }
-    } catch (err) {
-      console.error("Fehler beim Abrufen des Feeds:", err);
-    }
-  }
-}
-
-// Alle 5 Minuten prüfen
-setInterval(checkYouTube, 5 * 60 * 1000);
-
-client.login(process.env.DISCORD_TOKEN);
 
