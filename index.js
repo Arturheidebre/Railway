@@ -1,6 +1,6 @@
 const { 
   Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder,
-  ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType
+  ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType, PermissionsBitField
 } = require("discord.js");
 const { google } = require("googleapis");
 
@@ -28,11 +28,6 @@ const commands = [
     .addStringOption(option =>
       option.setName("url")
         .setDescription("YouTube Kanal URL")
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option.setName("textchannel")
-        .setDescription("ID des Channels, in dem gepostet werden soll")
         .setRequired(true)
     ),
   new SlashCommandBuilder()
@@ -66,8 +61,6 @@ const reactionRoles = {}; // messageId -> { emoji: roleId }
 // ------------------- Bot Ready -------------------
 client.once("ready", async () => {
   console.log(`✅ Eingeloggt als ${client.user.tag}`);
-
-  // Starte Intervall für registrierte Kanäle
   setInterval(checkAllChannels, 30000); // alle 30 Sekunden
 });
 
@@ -81,8 +74,8 @@ client.on("interactionCreate", async interaction => {
     // YouTube-Command
     if (interaction.commandName === "channel") {
       const url = interaction.options.getString("url");
-      const textChannelId = interaction.options.getString("textchannel");
-      await interaction.reply(`🔎 Suche Kanal für: ${url} ...`);
+      const textChannelId = interaction.channel.id; // automatisch aktueller Channel
+      await interaction.reply({ content: `🔎 Suche Kanal für: ${url} ...`, ephemeral: true });
 
       const channelId = await getChannelIdFromUrl(url);
       if (!channelId) return interaction.followUp("❌ Konnte keine Kanal-ID finden!");
@@ -121,7 +114,7 @@ client.on("interactionCreate", async interaction => {
 
     // Clear Command
     if (interaction.commandName === "clear") {
-      if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
         return interaction.reply({ content: "❌ Du hast keine Rechte, Nachrichten zu löschen!", ephemeral: true });
       }
 
