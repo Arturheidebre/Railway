@@ -8,6 +8,7 @@ const { google } = require("googleapis");
 const TOKEN = process.env.DISCORD_TOKEN;
 const YT_API_KEY = process.env.YT_API_KEY;
 const CLIENT_ID = process.env.CLIENT_ID; // deine Bot-Application-ID
+const GUILD_ID = process.env.GUILD_ID;   // dein Testserver
 
 // Discord Client
 const client = new Client({ intents: [
@@ -48,8 +49,9 @@ const rest = new REST({ version: "10" }).setToken(TOKEN);
 (async () => {
   try {
     console.log("Slash-Commands werden registriert...");
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log("✅ Slash-Commands registriert!");
+    // Guild-spezifisch registrieren für sofortige Anzeige
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+    console.log("✅ Slash-Commands registriert (guild-spezifisch)!");
   } catch (err) {
     console.error(err);
   }
