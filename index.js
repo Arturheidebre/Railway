@@ -1,5 +1,5 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from "discord.js";
-import { google } from "googleapis";
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const { google } = require("googleapis");
 
 // Tokens aus Environment Variablen
 const TOKEN = process.env.DISCORD_TOKEN;
