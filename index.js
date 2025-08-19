@@ -7,7 +7,7 @@ const { google } = require("googleapis");
 // Tokens aus Environment Variablen
 const TOKEN = process.env.DISCORD_TOKEN;
 const YT_API_KEY = process.env.YT_API_KEY;
-const CLIENT_ID = process.env.CLIENT_ID; // deine Bot-Application-ID
+const CLIENT_ID = process.env.CLIENT_ID;
 
 // Discord Client
 const client = new Client({ intents: [
@@ -27,7 +27,12 @@ const commands = [
     .setDescription("Überwacht einen YouTube-Kanal und zeigt die neuesten Videos an")
     .addStringOption(option =>
       option.setName("url")
-        .setDescription("YouTube Kanal URL (z.B. https://youtube.com/@ArtendoYT)")
+        .setDescription("YouTube Kanal URL")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName("textchannel")
+        .setDescription("ID des Channels, in dem gepostet werden soll")
         .setRequired(true)
     ),
   new SlashCommandBuilder()
@@ -58,33 +63,17 @@ const rest = new REST({ version: "10" }).setToken(TOKEN);
 // ------------------- Reaction Roles Speicher -------------------
 const reactionRoles = {}; // messageId -> { emoji: roleId }
 
-// ------------------- YouTube Watch Speicher -------------------
-const watchedChannels = new Map(); // channelId -> lastVideoId
-
 // ------------------- Bot Ready -------------------
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`✅ Eingeloggt als ${client.user.tag}`);
 
-  // Interval alle 30s checken
-  setInterval(async () => {
-    for (const [ytChannelId, data] of watchedChannels) {
-      const latest = await getLatestVideo(ytChannelId);
-      if (!latest) continue;
-
-      if (latest.url !== data.lastUrl) {
-        // Neues Video entdeckt
-        const discordChannel = client.channels.cache.get(data.discordChannelId);
-        if (discordChannel) {
-          discordChannel.send(`📺 Neues Video von **${data.name}**: **${latest.title}**\n${latest.url}`);
-        }
-        watchedChannels.set(ytChannelId, {
-          ...data,
-          lastUrl: latest.url
-        });
-      }
-    }
-  }, 30_000); // 30 Sekunden
+  // Starte Intervall für registrierte Kanäle
+  setInterval(checkAllChannels, 30000); // alle 30 Sekunden
 });
+
+// ------------------- Kanal-Registrierung -------------------
+const registeredChannels = {}; 
+// Format: { youtubeChannelId: { textChannelId: string, lastVideoId: string } }
 
 // ------------------- Slash-Command Handler -------------------
 client.on("interactionCreate", async interaction => {
@@ -92,6 +81,7 @@ client.on("interactionCreate", async interaction => {
     // YouTube-Command
     if (interaction.commandName === "channel") {
       const url = interaction.options.getString("url");
+      const textChannelId = interaction.options.getString("textchannel");
       await interaction.reply(`🔎 Suche Kanal für: ${url} ...`);
 
       const channelId = await getChannelIdFromUrl(url);
@@ -99,17 +89,16 @@ client.on("interactionCreate", async interaction => {
 
       const video = await getLatestVideo(channelId);
       if (video) {
-        interaction.followUp(`📺 Neuestes Video: **${video.title}**\n${video.url}`);
+        registeredChannels[channelId] = {
+          textChannelId,
+          lastVideoId: video.url
+        };
+        const channel = await client.channels.fetch(textChannelId);
+        channel.send(`@Benachrichtigungen 📺 Neuestes Video: **${video.title}**\n${video.url}`);
+        interaction.followUp(`✅ Kanal registriert und Video gepostet in <#${textChannelId}>`);
       } else {
         interaction.followUp("❌ Keine Videos gefunden.");
       }
-
-      // Merken für Auto-Check
-      watchedChannels.set(channelId, {
-        name: url,
-        discordChannelId: interaction.channel.id,
-        lastUrl: video ? video.url : null
-      });
     }
 
     // Reaction Roles Setup
@@ -159,7 +148,7 @@ client.on("interactionCreate", async interaction => {
     const roles = interaction.guild.roles.cache
       .filter(r => !r.managed && r.name !== "@everyone")
       .map(r => ({ label: r.name, value: r.id }))
-      .slice(0, 25); // nur die ersten 25 Rollen nehmen
+      .slice(0, 25);
 
     const rows = [];
     for (let i = 0; i < count; i++) {
@@ -188,8 +177,37 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-// --- YouTube Helper Funktionen ---
+// ------------------- YouTube Helper Funktionen -------------------
 async function getChannelIdFromUrl(url) {
   if (url.includes("/channel/")) return url.split("/channel/")[1];
   if (url.includes("/@")) {
-    const username = url.split("/@")[1]
+    const username = url.split("/@")[1];
+    const res = await youtube.search.list({ part: "snippet", type: "channel", q: username, maxResults: 1 });
+    return res.data.items[0]?.snippet.channelId || null;
+  }
+  return null;
+}
+
+async function getLatestVideo(channelId) {
+  const res = await youtube.search.list({ part: "snippet", channelId, order: "date", maxResults: 1 });
+  if (res.data.items.length === 0) return null;
+  const video = res.data.items[0];
+  return { title: video.snippet.title, url: "https://youtu.be/" + video.id.videoId };
+}
+
+// ------------------- Überprüfung aller registrierten Kanäle -------------------
+async function checkAllChannels() {
+  for (const channelId in registeredChannels) {
+    const { textChannelId, lastVideoId } = registeredChannels[channelId];
+    const newVideo = await getLatestVideo(channelId);
+    if (!newVideo) continue;
+    if (newVideo.url !== lastVideoId) {
+      registeredChannels[channelId].lastVideoId = newVideo.url;
+      const channel = await client.channels.fetch(textChannelId);
+      channel.send(`@Benachrichtigungen 📺 Neues Video/Stream/Short: **${newVideo.title}**\n${newVideo.url}`);
+    }
+  }
+}
+
+// ------------------- Bot Login -------------------
+client.login(TOKEN);
